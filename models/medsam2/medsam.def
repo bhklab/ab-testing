@@ -1,0 +1,66 @@
+Bootstrap: docker
+From: pytorch/pytorch
+
+%labels
+    Author Joshua Siraj
+    Version 0.1.0
+    Model MedSAM2-RECIST
+
+%environment
+    export DEBIAN_FRONTEND=noninteractive
+    export PYTHONUNBUFFERED=1
+    export CUDA_VISIBLE_DEVICES=""
+    export PATH="/workspace/MedSAM2:${PATH}"
+
+%post
+    set -eux
+
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        python3-dev \
+        build-essential \
+        libgl1 \
+        libglib2.0-0 \
+        git \
+        curl \
+        wget \
+        ca-certificates
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+
+    git clone --depth 1 https://github.com/medfm-flare/MedSAM2-RECIST.git /workspace/MedSAM2
+
+    cd /workspace/MedSAM2
+    export SAM2_BUILD_CUDA=0
+    pip install --no-cache-dir -e '.[dev]'
+    pip install --no-cache-dir 'pydantic>=2.13'
+
+    bash download_MedSAM2.sh
+
+    mkdir -p /workspace/inputs /workspace/outputs
+
+%files
+    contract.py /workspace/contract.py
+
+%runscript
+    #!/bin/bash
+    set -euo pipefail
+
+    cd /workspace/MedSAM2
+
+    python /workspace/contract.py
+
+    exec python3 medsam2_infer_CT_lesion_npz_recist.py \
+        --imgs_path /workspace/inputs \
+        --pred_save_dir /workspace/outputs
+
+%help
+    MedSAM2-RECIST inference container for ab_testing.
+
+    Build (from this directory):
+        apptainer build medsam2.sif medsam.def
+
+    Run:
+        apptainer run --bind /path/to/inputs:/workspace/inputs \
+                      --bind /path/to/outputs:/workspace/outputs \
+                      medsam2.sif
