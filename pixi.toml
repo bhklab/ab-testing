@@ -9,6 +9,9 @@ version = "0.1.0"
 
 [dependencies]
 python = ">=3.11,<3.14"
+simpleitk = ">=2.5.5,<3"
 
 [pypi-dependencies]
 pydantic = ">=2.13.4, <3"
+damply = ">=0.26.1, <0.27"
+med-imagetools = ">=2.15.0"
