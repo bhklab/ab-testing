@@ -1,0 +1,34 @@
+[project]
+authors = [{name = "Joshua Siraj", email = "joshua.siraj@ryerson.ca"}, {name = "Katy Scott", email = "bhklab.katyscott@gmail.com"}]
+dependencies = [
+    "simpleitk",
+    "pydantic",
+    "damply",
+    "med-imagetools"
+]
+name = "ab-testing"
+requires-python = ">= 3.11"
+version = "0.1.0"
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-64", "osx-arm64"]
+
+[tool.pixi.pypi-dependencies]
+ab_testing = { path = ".", editable = true }
+
+[tool.pixi.activation]
+# convenient variables which can be used in scripts
+env.CONFIG = "${PIXI_PROJECT_ROOT}/config"
+env.METADATA = "${PIXI_PROJECT_ROOT}/metadata"
+env.LOGS = "${PIXI_PROJECT_ROOT}/logs"
+env.RAWDATA = "${PIXI_PROJECT_ROOT}/data/rawdata"
+env.PROCDATA = "${PIXI_PROJECT_ROOT}/data/procdata"
+env.RESULTS = "${PIXI_PROJECT_ROOT}/data/results"
+env.SCRIPTS = "${PIXI_PROJECT_ROOT}/workflow/scripts"
+
+[tool.pixi.tasks]
