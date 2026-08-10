@@ -257,6 +257,7 @@ def generate_recist(
         # isolate individual lesion mask and find the axial slice with the largest area (most voxels)
         mask = (instance == lid).astype(np.uint8)
         key_slice = int(np.argmax(np.sum(mask, axis=(1, 2))))
+        # Compute RECIST measurement endpoints
         result = compute_recist_line(mask[key_slice])
         if result is None:
             # Degenerate lesion (largest slice is a single pixel), so its
@@ -270,7 +271,7 @@ def generate_recist(
             # Lesion diameter is below the threshold, so it is not included in the RECIST prompt.
             short_ids.append(int(lid))
             continue
-        # Calculate RECIST for largest enough lesions
+        # Draw RECIST line for largest enough lesions
         cv2.line(recist[key_slice], (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])),
                  color=int(lid), thickness=RECIST_LINE_THICKNESS)
     
