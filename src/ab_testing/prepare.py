@@ -7,8 +7,8 @@ from damply import dirs
 from imgtools.transforms.functional import window_intensity
 from pathlib import Path
 
-from utils.masks import get_max_area_slice
-from utils.annotations import get_recist_pts, get_line_from_recist
+from ab_testing.utils.masks import get_max_area_slice
+from ab_testing.utils.annotations import get_recist_pts, get_line_from_recist
 
 logfile = dirs.LOGS / "models" / "prepare_medsam2.log"
 logfile.parent.mkdir(parents=True, exist_ok=True)
