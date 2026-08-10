@@ -69,6 +69,7 @@ from typing import Any
 
 import cc3d
 import cv2
+import pandas as pd
 import nibabel as nib
 import numpy as np
 import SimpleITK as sitk
@@ -549,6 +550,27 @@ def build_pairs(
     return pairs
 
 
+def build_pairs_from_mit(
+    ds: str,
+    mit_dir: Path
+) -> list[tuple[Path, Path, str]]:
+    """Set up samples to iterate over from a med-imagetools autopipeline index."""
+    if not mit_dir.exists():
+        raise SystemExit(f"[setup] med-imagetools directory not found at {mit_dir}")
+
+    # Get just the name of the MIT directory to use for index file loading
+    mit_ds = mit_dir.stem
+
+    # Load med-imagetools index into a dataframe
+    mit_index_path = mit_dir / f"{mit_ds}_index-simple.csv"
+    mit_index = pd.read_csv(mit_index_path)
+
+    # group the dataframe by SampleNumber
+    # then build pairs between each Scan and matching Mask for list
+
+    return
+
+
 def run_dataset(
         ds: str, 
         root: Path, 
@@ -560,7 +582,8 @@ def run_dataset(
         prune_filtered: bool = False, 
         min_recist_mm: float = MIN_RECIST_MM,
         tumor_slices_only: bool = False,
-        tumor_slice_margin: int = 0
+        tumor_slice_margin: int = 0,
+        anat_window: str = 'soft-tissue'
 ) -> tuple[int, int, int, int, int, int, int]:
     """Convert one dataset to per-case npz, with optional RECIST and tumor-slice cropping.
 
@@ -580,13 +603,13 @@ def run_dataset(
     Returns:
         tuple of counts: (written, skipped, filtered, errors, dropped_lesions, z_kept, z_total)
     """
-    bucket = DATASET_WINDOW[ds]
-    win = WINDOW_BUCKET[bucket]
+    # bucket = DATASET_WINDOW[ds]
+    win = WINDOW_BUCKET[anat_window]
     level, width = win["level"], win["width"]
     pairs = build_pairs(ds, root) # list of (image_path, label_path, case_id) --> can get this from med-imagetools index
     out_dir = out_root / ds
     out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"\n=== {ds}  bucket={bucket}  window=L{level}/W{width}  cases={len(pairs)}  "
+    print(f"\n=== {ds}  anat_window={anat_window}  window=L{level}/W{width}  cases={len(pairs)}  "
           f"recist={'on' if with_recist else 'off'}  "
           f"mode={'overwrite' if overwrite else 'resume'}  "
           f"min_label_slices={min_slices or 'off'}  "
@@ -678,6 +701,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--tumor-slice-margin", type=int, default=0,
                    help="extra axial slices to keep on each side of the tumor span "
                         "(default 0; only with --tumor-slices-only)")
+    p.add_argument("--anat-window", type=str, default='soft-tissue',
+                   help=f"window settings to use for processing CT. Must be one of {WINDOW_BUCKET.keys()} "
+                        f"(default: 'soft-tissue')")
     args = p.parse_args(argv)
     if args.min_label_slices < 0:
         p.error("--min-label-slices must be >= 0")
@@ -687,7 +713,9 @@ def main(argv: list[str] | None = None) -> int:
         p.error("--tumor-slice-margin must be >= 0")
     if args.tumor_slice_margin and not args.tumor_slices_only:
         p.error("--tumor-slice-margin has no effect without --tumor-slices-only")
-
+    if args.anat_window not in WINDOW_BUCKET.keys():
+        p.error(f"--anat-window must be one of {WINDOW_BUCKET.keys()}")
+    
     out_root = args.out_root or (args.root / "npz_version_data")
     datasets = sorted(DATASET_WINDOW) if args.all else [args.dataset]
     with_recist = not args.no_recist
@@ -704,7 +732,8 @@ def main(argv: list[str] | None = None) -> int:
           f"min_label_slices={args.min_label_slices or 'off'}  "
           f"min_recist_mm={f'{min_recist_mm:g}' if min_recist_mm > 0 else 'off'}  "
           f"tumor_slices_only={f'on(+{args.tumor_slice_margin})' if args.tumor_slices_only else 'off'}"
-          f"{'  prune_filtered=on' if args.prune_filtered else ''}", flush=True)
+          f"{'  prune_filtered=on' if args.prune_filtered else ''}", 
+          f"anat_window={args.anat_window} ", flush=True)
     total_written = 0
     total_skipped = 0
     total_filtered = 0
