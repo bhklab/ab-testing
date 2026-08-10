@@ -121,7 +121,10 @@ def ct_window(
     Args:
         data: (Z, Y, X) float32 CT array in Hounsfield units
         level: window level (center)
-        width: window width 
+        width: window width
+    
+    Returns:
+        Standardized image with values between [0, 255.0], windowed based on level and width inputs.
     """
     lo = level - width / 2
     hi = level + width / 2
@@ -195,7 +198,15 @@ def count_label_slices(lbl_path: str | Path) -> int:
 # ─── RECIST longest-diameter line ─────────────────────────────────────────────
 
 def compute_recist_line(mask_2d: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
-    """Farthest pair of external-contour pixels on a 2D lesion slice (clinical LD)."""
+    """Farthest pair of external-contour pixels on a 2D lesion slice (clinical LD).
+    
+    Args:
+        mask_2d: 2D uint8 binary mask of a single lesion on a single axial slice
+
+    Returns:
+        p1, p2: (2,) int32 pixel coordinates of the endpoints of the longest-diameter line, in (col, row) order
+        None: if the mask is degenerate (no contour or a single pixel)
+    """
     contours, _ = cv2.findContours(
         mask_2d.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
     )
@@ -221,6 +232,14 @@ def recist_length_mm(
     Contour points are cv2 (col, row) == (X, Y) on an axial slice; `spacing` is
     sitk order (x, y, z), so component 0 scales the column delta and component 1
     the row delta. The line is in-plane, so z spacing never enters.
+
+    Args:
+        p1: (2,) int32 pixel coordinates of one endpoint of the RECIST line, in (col, row) order
+        p2: (2,) int32 pixel coordinates of the other endpoint of the RECIST line, in (col, row) order
+        spacing: (3,) float64 image spacing from sitk.GetSpacing (x,y,z)
+    
+    Returns:
+        length_mm: float, physical length of the RECIST line in millimeters
     """
     dx = (float(p1[0]) - float(p2[0])) * float(spacing[0])
     dy = (float(p1[1]) - float(p2[1])) * float(spacing[1])
