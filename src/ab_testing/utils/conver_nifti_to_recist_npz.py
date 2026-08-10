@@ -50,6 +50,11 @@ Usage:
   python conver_nifti_to_recist_npz.py --all --no-exclude-small-lesions  # keep <10mm lesions
   python conver_nifti_to_recist_npz.py --all --tumor-slices-only  # crop Z to the tumor ROI
   python conver_nifti_to_recist_npz.py --all --tumor-slices-only --tumor-slice-margin 5
+
+ab_testing notes:
+    - img == scan
+    - lbl == mask
+
 """
 from __future__ import annotations
 
@@ -107,8 +112,17 @@ DATASET_WINDOW: dict[str, str] = {
 
 # ─── CT windowing ─────────────────────────────────────────────────────────────
 
-def ct_window(data: np.ndarray, level: int, width: int) -> np.ndarray:
-    """Window CT HU data to [0, 255.0] float16."""
+def ct_window(
+    data: np.ndarray, 
+    level: int, 
+    width: int
+) -> np.ndarray:
+    """Apply windowing to CT HU data and then standardize to [0, 255.0] float16.
+    Args:
+        data: (Z, Y, X) float32 CT array in Hounsfield units
+        level: window level (center)
+        width: window width 
+    """
     lo = level - width / 2
     hi = level + width / 2
     data = np.clip(data, lo, hi)
@@ -133,9 +147,21 @@ def _meta_from_affine(affine: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.nd
 
 
 def read_case(
-    img_path: str | Path, lbl_path: str | Path
+    img_path: str | Path, 
+    lbl_path: str | Path
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, str]:
-    """Read image+label as (Z,Y,X). Fall back to nibabel for sforms ITK rejects."""
+    """Read scan (CT) and segmentation mask from nifti and return as (Z,Y,X) numpy arrays, where Z is slices. Fall back to nibabel for sforms ITK rejects.
+    Args:
+        img_path: path to the image file
+        lbl_path: path to the label file
+    Returns:
+        ct: (Z,Y,X) float32 CT array
+        lbl: (Z,Y,X) uint8 label array
+        spacing: (3,) float64 image spacing from sitk.GetSpacing (x,y,z)
+        direction: (9,) float64 image direction from sitk.GetDirection
+        origin: (3,) float64 image origin from sitk.GetOrigin
+        reader: str, which reader was used to load the image and label, either 'sitk' or 'nibabel_orthofix'
+    """
     try:
         img = sitk.ReadImage(str(img_path))
         ct = sitk.GetArrayFromImage(img).astype(np.float32)
@@ -185,7 +211,11 @@ def compute_recist_line(mask_2d: np.ndarray) -> tuple[np.ndarray, np.ndarray] | 
     return pts[i].astype(int), pts[j].astype(int)
 
 
-def recist_length_mm(p1: np.ndarray, p2: np.ndarray, spacing: np.ndarray) -> float:
+def recist_length_mm(
+    p1: np.ndarray, 
+    p2: np.ndarray, 
+    spacing: np.ndarray
+) -> float:
     """Physical length of an in-plane RECIST line.
 
     Contour points are cv2 (col, row) == (X, Y) on an axial slice; `spacing` is
@@ -198,7 +228,9 @@ def recist_length_mm(p1: np.ndarray, p2: np.ndarray, spacing: np.ndarray) -> flo
 
 
 def generate_recist(
-    instance: np.ndarray, spacing: np.ndarray, min_recist_mm: float = 0.0,
+    instance: np.ndarray, 
+    spacing: np.ndarray, 
+    min_recist_mm: float = 0.0,
 ) -> tuple[np.ndarray, list[int]]:
     """Draw each lesion's longest-diameter line on its largest-area axial slice.
 
@@ -207,12 +239,22 @@ def generate_recist(
     they get no line, and the caller drops them from `gts` too. There is no voxel
     -count floor: min_recist_mm already excludes small lesions, and in physical
     units rather than voxels.
+
+    Args:
+        instance: segmentation mask, (Z, Y, X) uint16 cc3d 26-connectivity, can have multiple lesions with different label values
+        spacing: mask spacing (3,) float64 (x, y, z)
+        min_recist_mm: minimum diameter threshold for removal of small lesions from gts
+    
+    Returns:
+        recist: array of generated longest-diameter line recist annotations per-lesion (Z, Y, X) uint16, value == lesion id
+        short_ids: list of lesion ids whose longest diameter is below min_recist_mm
     """
     recist = np.zeros_like(instance, dtype=np.uint16)
     short_ids: list[int] = []
     for lid in np.unique(instance):
         if lid == 0:
             continue
+        # isolate individual lesion mask and find the axial slice with the largest area (most voxels)
         mask = (instance == lid).astype(np.uint8)
         key_slice = int(np.argmax(np.sum(mask, axis=(1, 2))))
         result = compute_recist_line(mask[key_slice])
@@ -225,16 +267,22 @@ def generate_recist(
             continue
         p1, p2 = result
         if min_recist_mm > 0 and recist_length_mm(p1, p2, spacing) < min_recist_mm:
+            # Lesion diameter is below the threshold, so it is not included in the RECIST prompt.
             short_ids.append(int(lid))
             continue
+        # Calculate RECIST for largest enough lesions
         cv2.line(recist[key_slice], (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])),
                  color=int(lid), thickness=RECIST_LINE_THICKNESS)
+    
     return recist, short_ids
 
 
 # ─── Tumor ROI crop along Z ────────────────────────────────────────────────────
 
-def tumor_z_range(instance: np.ndarray, margin: int = 0) -> tuple[int, int] | None:
+def tumor_z_range(
+    instance: np.ndarray, 
+    margin: int = 0
+) -> tuple[int, int] | None:
     """[z_start, z_stop) contiguous span of axial slices holding label, + margin.
 
     Contiguous on purpose: the exact set of labeled slices would drop the gaps
@@ -249,8 +297,12 @@ def tumor_z_range(instance: np.ndarray, margin: int = 0) -> tuple[int, int] | No
     return z0, z1
 
 
-def shift_origin_z(origin: np.ndarray, spacing: np.ndarray, direction: np.ndarray,
-                   z0: int) -> np.ndarray:
+def shift_origin_z(
+    origin: np.ndarray, 
+    spacing: np.ndarray, 
+    direction: np.ndarray,
+    z0: int
+) -> np.ndarray:
     """Physical origin of the sub-volume that starts at axial index z0.
 
     sitk maps index->physical as origin + D @ (spacing * index) with D the 3x3
@@ -266,7 +318,19 @@ def shift_origin_z(origin: np.ndarray, spacing: np.ndarray, direction: np.ndarra
 
 # ─── Resume support ────────────────────────────────────────────────────────────
 
-def expected_keys(with_recist: bool, with_zcrop: bool = False) -> set[str]:
+def expected_keys(
+    with_recist: bool,
+    with_zcrop: bool = False
+) -> set[str]:
+    """Helper function for is_complete to check if the npz has the expected keys.
+    
+    Args:
+        with_recist: bool, whether the npz should have the 'recist' key
+        with_zcrop: bool, whether the npz should have the 'z_crop' key
+    
+    Returns:
+        keys: set of expected keys in the npz file
+    """
     keys = {"imgs", "gts", "spacing", "direction", "origin", "reader"}
     if with_recist:
         keys.add("recist")
@@ -275,7 +339,11 @@ def expected_keys(with_recist: bool, with_zcrop: bool = False) -> set[str]:
     return keys
 
 
-def is_complete(out_path: str | Path, with_recist: bool, with_zcrop: bool = False) -> bool:
+def is_complete(
+    out_path: str | Path, 
+    with_recist: bool, 
+    with_zcrop: bool = False
+) -> bool:
     """True if out_path is an npz that opens cleanly and holds the expected keys.
 
     Only the zip central directory + member names are read (np.load is lazy), so
@@ -297,7 +365,10 @@ def is_complete(out_path: str | Path, with_recist: bool, with_zcrop: bool = Fals
     return expected_keys(with_recist, with_zcrop).issubset(files)
 
 
-def savez_atomic(out_path: Path, arrays: dict[str, Any]) -> None:
+def savez_atomic(
+    out_path: Path, 
+    arrays: dict[str, Any]
+) -> None:
     """np.savez_compressed via a temp file + rename, so readers never see a partial npz."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     # NamedTemporaryFile in the destination dir keeps the rename on one filesystem.
@@ -315,16 +386,43 @@ def savez_atomic(out_path: Path, arrays: dict[str, Any]) -> None:
 # ─── One case ──────────────────────────────────────────────────────────────────
 
 def case_to_npz(
-    img_path: str | Path, lbl_path: str | Path, out_path: str | Path, *,
-    level: int, width: int, with_recist: bool = True,
-    min_recist_mm: float = 0.0, tumor_slices_only: bool = False, tumor_slice_margin: int = 0,
+    img_path: str | Path, 
+    lbl_path: str | Path, 
+    out_path: str | Path, 
+    *,
+    level: int, 
+    width: int, 
+    with_recist: bool = True,
+    min_recist_mm: float = 0.0, 
+    tumor_slices_only: bool = False, 
+    tumor_slice_margin: int = 0,
 ) -> dict[str, int]:
     """Window one NIfTI image+label -> npz. Always (over)writes; caller handles skipping.
 
     -> {'dropped', 'remaining', 'z0', 'z1', 'nz_full'} (z* == 0/nz_full when uncropped)
+
+    Args:
+        img_path: str | Path, path to the image/scan file
+        lbl_path: str | Path, path to the segmentation label/mask file
+        out_path: str | Path, path to save the output npz file
+        level: int, window level (center) for image windowing
+        width: int, window width for image windowing
+        with_recist: bool, whether to compute RECIST longest-diameter lines
+        min_recist_mm: float, minimum diameter threshold for inclusion of lesions in gts and recist, default 0.0 (no filtering)
+        tumor_slices_only: bool, whether to crop the output arrays along Z to the tumor ROI, default False
+        tumor_slice_margin: int, margin to add around the tumor slice crop, default 0
+
+    Returns:
+        stats: dict[str, int], statistics about the conversion, including:
+            'dropped': number of lesions dropped due to min_recist_mm
+            'remaining': number of lesions remaining in gts after filtering
+            'z0': starting slice index of the tumor crop (0 if uncropped)
+            'z1': ending slice index of the tumor crop (nz_full if uncropped)
+            'nz_full': total number of slices in the original volume
     """
     ct, lbl, spacing, direction, origin, reader = read_case(img_path, lbl_path)
     imgs = ct_window(ct, level, width)
+    
     instance = cc3d.connected_components((lbl > 0).astype(np.uint8), connectivity=26).astype(np.uint16)
 
     recist = None
@@ -405,7 +503,10 @@ def _convert_one(job: dict[str, Any]) -> tuple[str, str, str | None, dict[str, i
 
 # ─── Batch ─────────────────────────────────────────────────────────────────────
 
-def build_pairs(ds: str, root: Path) -> list[tuple[Path, Path, str]]:
+def build_pairs(
+    ds: str, 
+    root: Path
+) -> list[tuple[Path, Path, str]]:
     """(image, label, case_id) triples. Fail loud on structural problems."""
     if ds not in DATASET_WINDOW:
         raise SystemExit(f"[setup] unknown dataset {ds!r} (known: {sorted(DATASET_WINDOW)})")
@@ -428,15 +529,41 @@ def build_pairs(ds: str, root: Path) -> list[tuple[Path, Path, str]]:
     return pairs
 
 
-def run_dataset(ds: str, root: Path, out_root: Path, workers: int, with_recist: bool,
-                overwrite: bool = False, min_slices: int = MIN_LABEL_SLICES,
-                prune_filtered: bool = False, min_recist_mm: float = MIN_RECIST_MM,
-                tumor_slices_only: bool = False,
-                tumor_slice_margin: int = 0) -> tuple[int, int, int, int, int, int, int]:
+def run_dataset(
+        ds: str, 
+        root: Path, 
+        out_root: Path, 
+        workers: int, 
+        with_recist: bool,
+        overwrite: bool = False, 
+        min_slices: int = MIN_LABEL_SLICES,
+        prune_filtered: bool = False, 
+        min_recist_mm: float = MIN_RECIST_MM,
+        tumor_slices_only: bool = False,
+        tumor_slice_margin: int = 0
+) -> tuple[int, int, int, int, int, int, int]:
+    """Convert one dataset to per-case npz, with optional RECIST and tumor-slice cropping.
+
+    Args:
+        ds: str, dataset name (must be in DATASET_WINDOW)
+        root: Path, pathway to the image and mask directories (nnU-Net raw root)
+        out_root: Path, output directory for the npz files
+        workers: int, number of parallel processes to use
+        with_recist: bool, whether to compute RECIST longest-diameter lines
+        overwrite: bool, whether to reconvert every case (default False, skip existing npz)
+        min_slices: int, minimum number of axial slices with label for inclusion of a case
+        prune_filtered: bool, whether to delete npz that no longer meets the min_slices
+        min_recist_mm: float, minimum diameter threshold for inclusion of lesions in gts and recist, default 0.0 (no filtering)
+        tumor_slices_only: bool, whether to crop the output arrays along Z to the tumor ROI, default False
+        tumor_slice_margin: int, margin to add around the tumor slice crop, default 0
+    
+    Returns:
+        tuple of counts: (written, skipped, filtered, errors, dropped_lesions, z_kept, z_total)
+    """
     bucket = DATASET_WINDOW[ds]
     win = WINDOW_BUCKET[bucket]
     level, width = win["level"], win["width"]
-    pairs = build_pairs(ds, root)
+    pairs = build_pairs(ds, root) # list of (image_path, label_path, case_id) --> can get this from med-imagetools index
     out_dir = out_root / ds
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"\n=== {ds}  bucket={bucket}  window=L{level}/W{width}  cases={len(pairs)}  "
