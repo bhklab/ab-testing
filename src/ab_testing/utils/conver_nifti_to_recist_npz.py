@@ -59,6 +59,7 @@ ab_testing notes:
 from __future__ import annotations
 
 import argparse
+import itertools
 import os
 import sys
 import tempfile
@@ -551,10 +552,10 @@ def build_pairs(
 
 
 def build_pairs_from_mit(
-    ds: str,
     mit_dir: Path
 ) -> list[tuple[Path, Path, str]]:
-    """Set up samples to iterate over from a med-imagetools autopipeline index."""
+    """Set up (image, label, case_id) triples to iterate over from a med-imagetools autopipeline index. case_id will be the label for the npz file.
+    """
     if not mit_dir.exists():
         raise SystemExit(f"[setup] med-imagetools directory not found at {mit_dir}")
 
@@ -565,10 +566,21 @@ def build_pairs_from_mit(
     mit_index_path = mit_dir / f"{mit_ds}_index-simple.csv"
     mit_index = pd.read_csv(mit_index_path)
 
-    # group the dataframe by SampleNumber
-    # then build pairs between each Scan and matching Mask for list
+    pairs: list[tuple[Path, Path, str]] = []
 
-    return
+    # group the dataframe by SampleNumber
+    for _sample_num, group in mit_index.groupby('SampleNumber'):
+        # Get all of the images and segmentation masks
+        images = mit_dir / group.loc[group['class'] == 'Scan', 'filepath'].astype(str)
+        labels = mit_dir / group.loc[group['class'] == 'Mask', 'filepath'].astype(str)
+        # Extract the case_id from the beginning of the filepath
+        case_id = group['filepath'].values[0].split('/')[0]
+
+        # Get each pair of the scan and it's labels, and add the sample number as the case for the pair triplet
+        for pair in itertools.product(images, labels, [case_id]):
+            pairs.append(pair)
+
+    return pairs
 
 
 def run_dataset(
@@ -583,7 +595,8 @@ def run_dataset(
         min_recist_mm: float = MIN_RECIST_MM,
         tumor_slices_only: bool = False,
         tumor_slice_margin: int = 0,
-        anat_window: str = 'soft-tissue'
+        anat_window: str = 'soft-tissue',
+        pair_builder: str = 'nnunet'
 ) -> tuple[int, int, int, int, int, int, int]:
     """Convert one dataset to per-case npz, with optional RECIST and tumor-slice cropping.
 
@@ -606,7 +619,14 @@ def run_dataset(
     # bucket = DATASET_WINDOW[ds]
     win = WINDOW_BUCKET[anat_window]
     level, width = win["level"], win["width"]
-    pairs = build_pairs(ds, root) # list of (image_path, label_path, case_id) --> can get this from med-imagetools index
+
+    match pair_builder:
+        case 'nnunet':
+            pairs = build_pairs(ds, root) # list of (image_path, label_path, case_id)
+        case 'mit':
+            pairs = build_pairs_from_mit(mit_dir = root)
+        case _:
+            raise ValueError(f"Incompatible pair_builder input: {pair_builder}. Must be 'nnunet' or 'mit'.")
     out_dir = out_root / ds
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"\n=== {ds}  anat_window={anat_window}  window=L{level}/W{width}  cases={len(pairs)}  "
@@ -674,7 +694,7 @@ def main(argv: list[str] | None = None) -> int:
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--dataset", choices=sorted(DATASET_WINDOW), help="convert one dataset")
     g.add_argument("--all", action="store_true", help="convert all 14 datasets")
-    p.add_argument("--root", type=Path, default=Path(ROOT_DEFAULT), help="nnU-Net raw root")
+    p.add_argument("--root", type=Path, default=Path(ROOT_DEFAULT), help="nnU-Net raw root OR med-imagetools autopipeline output dir")
     p.add_argument("--out-root", type=Path, default='./RECIST-npz',
                    help="output dir (default <root>/npz_version_data)")
     p.add_argument("--workers", type=int, default=24, help="process-pool size")
@@ -704,6 +724,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--anat-window", type=str, default='soft-tissue',
                    help=f"window settings to use for processing CT. Must be one of {WINDOW_BUCKET.keys()} "
                         f"(default: 'soft-tissue')")
+    p.add_argument("--pair-builder", type=str, default='nnunet',
+                   help="method to use for pair building, based on directory structure of niftis. Can be nnunet or mit (for med-imagetools). "
+                        "(default: 'nnunet')")
     args = p.parse_args(argv)
     if args.min_label_slices < 0:
         p.error("--min-label-slices must be >= 0")
