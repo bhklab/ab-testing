@@ -1,14 +1,13 @@
 import argparse
 import logging
-import pandas as pd
-import SimpleITK as sitk
+
 
 from damply import dirs
-from imgtools.transforms.functional import window_intensity
 from pathlib import Path
+from typing import Literal
 
-from ab_testing.utils.masks import get_max_area_slice
-from ab_testing.utils.annotations import get_recist_pts, get_line_from_recist
+from ab_testing.utils.conver_nifti_to_recist_npz import run_dataset, MIN_LABEL_SLICES, MIN_RECIST_MM
+
 
 logfile = dirs.LOGS / "models" / "prepare_medsam2.log"
 logfile.parent.mkdir(parents=True, exist_ok=True)
@@ -21,67 +20,74 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+ANATOMICAL_BUCKETS = Literal[
+    "lung"
+    "soft_tissue",   # includes heart
+    "bone",
+    "brain"
+]
 
 def prepare_data(
+    dataset: str, 
     imgtools_path: str | Path, 
     output_path: str | Path,
-    window_level: int = 0,
-    window_width: int = -1,
-    padding: int | list = 0,
+    anat_window: ANATOMICAL_BUCKETS = 'soft-tissue',
+    min_slices: int = MIN_LABEL_SLICES,
+    min_recist_mm: float = MIN_RECIST_MM,
+    workers: int = 24,
+    overwrite: bool = False,
     ) -> None:
+    """Process a med-imagetools nifti dataset by pair of image-masks and save into a npz:
+    * imgs: The image, windowed based on the anatomical window specified,
+    * gts: The corresponding 3D segmentation mask, 
+    * spacing: Original image/mask spacing, from SimpleITK
+    * direction: Original image/mask direction, from SimpleITK
+    * origin: Original image/mask origin, from SimpleTIK 
+    * reader: What library was used to load in the image/mask, will be sitk or nibabel_orthofix
+    * recist: Reverse-engineered RECIST longest diameter annotation derived from gts
+    
+    Based on min_slices and min_recist_mm, samples will be pruned and not saved as npz if they fall below the threshold.
+    """
+    written, skipped, filtered, errors, dropped_lesions, _z_kept, _z_total = run_dataset(
+        ds = dataset,
+        root = Path(imgtools_path),
+        out_root = Path(output_path),
+        workers = workers,
+        with_recist = True,
+        overwrite = overwrite,
+        min_slices = min_slices,
+        min_recist_mm = min_recist_mm,
+        prune_filtered = True,
+        anat_window = anat_window,
+        pair_builder = 'mit',
+    )
 
-    imgtools_path = Path(imgtools_path)
+    logger.info(f"\nTOTAL written={written} skipped={skipped} "
+                f"filtered={filtered} errors={errors} "
+                f"small_lesions_dropped={dropped_lesions}")
 
-    index_csv = pd.read_csv(imgtools_path / f"{imgtools_path.stem}_index-simple.csv")
+    return 1 if errors else 0
 
-    # DO THE NPZ CONVERSION HERE
-
-    # group the index by SampleNumber and iterate over the groups
-    for sample_number, metadata in index_csv.iloc[0:5].groupby("SampleNumber"):
-        logger.info(f"Processing sample {sample_number} with {len(metadata)} images")
-
-        # Get metadata for the scan and mask(s) for this sample
-        scan_metadata = metadata[metadata['class'] == 'Scan']
-        mask_metadata = metadata[metadata['class'] == 'Mask']
-
-        if mask_metadata.empty:
-            logger.warning(f"No mask found for sample {sample_number}, skipping.")
-            continue
-
-        # Load and process scan image for this sample
-        scan = sitk.ReadImage(imgtools_path / scan_metadata.iloc[0]['filepath'], outputPixelType=sitk.sitkInt16)
-        scan_size = scan.GetSize()
-
-        # Apply windowing to the image only
-        if window_width != -1:
-            scan = window_intensity(scan, window_level, window_width)
-
-        # Load each mask for this sample and save the scan and mask as .npz files
-        for mask_count, (_, mask_row) in enumerate(mask_metadata.iterrows()):
-            sample_id = f"{mask_row['PatientID']}_{mask_row['SampleNumber']}_{mask_count}"
-            mask = sitk.ReadImage(imgtools_path / mask_row['filepath'], outputPixelType=sitk.sitkUInt8)
-
-            #TODO: figure out how to do rerecist calculation
-            # Get largest area slice in mask
-            max_area_slice, _max_area_slice_idx = get_max_area_slice(mask)
-
-            # Calculate RERECIST points from largest mask slice
-            rerecist_pts = get_recist_pts(max_area_slice)
-            rerecist_line = get_line_from_recist(rerecist_pts,
-                                                 slice_idx = max_area_slice, 
-                                                 scan_size = [scan_size[2], scan_size[0], scan_size[1]])
-
-
-
-            print(rerecist_line)
             
 
             
 
 if __name__ == "__main__":
-    argparser = argparse.ArgumentParser()
-    argparser.add_argument("--imgtools_path", type=str, required=True)
-    argparser.add_argument("--output_path", type=str, required=True)
-    args = argparser.parse_args()
+    prepare_data(
+        dataset='NSCLC-Radiomics',
+        imgtools_path= dirs.RAWDATA / 'TCIA_NSCLC-Radiomics' / 'images' / 'mit_NSCLC-Radiomics',
+        output_path = dirs.PROCDATA / 'TCIA_NSCLC-Radiomics' / 'images' / 'npz_medsam2_data',
+        anat_window = 'lung',
+        min_slices= 3,
+    )
 
-    prepare_data(args.imgtools_path, args.output_path)
+
+
+    # argparser = argparse.ArgumentParser()
+    # argparser.add_argument("--imgtools_path", type=str, required=True)
+    # argparser.add_argument("--output_path", type=str, required=True)
+    # args = argparser.parse_args()
+
+    # # dirs.PROCDATA / 'TCIA_NSCLC-Radiomics' / 'images' / 'npz_medsam2_data'
+
+    # prepare_data(args.imgtools_path, args.output_path)
