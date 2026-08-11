@@ -601,7 +601,7 @@ def run_dataset(
     """Convert one dataset to per-case npz, with optional RECIST and tumor-slice cropping.
 
     Args:
-        ds: str, dataset name (must be in DATASET_WINDOW)
+        ds: str, dataset name 
         root: Path, pathway to the image and mask directories (nnU-Net raw root)
         out_root: Path, output directory for the npz files
         workers: int, number of parallel processes to use
@@ -612,7 +612,8 @@ def run_dataset(
         min_recist_mm: float, minimum diameter threshold for inclusion of lesions in gts and recist, default 0.0 (no filtering)
         tumor_slices_only: bool, whether to crop the output arrays along Z to the tumor ROI, default False
         tumor_slice_margin: int, margin to add around the tumor slice crop, default 0
-    
+        anat_window: str, anatomical windowing to apply to the images
+        pair_builder: str, method to use for generating list of pairs to process
     Returns:
         tuple of counts: (written, skipped, filtered, errors, dropped_lesions, z_kept, z_total)
     """
