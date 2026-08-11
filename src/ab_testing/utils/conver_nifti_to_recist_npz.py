@@ -584,19 +584,19 @@ def build_pairs_from_mit(
 
 
 def run_dataset(
-        ds: str, 
-        root: Path, 
-        out_root: Path, 
-        workers: int, 
-        with_recist: bool,
-        overwrite: bool = False, 
-        min_slices: int = MIN_LABEL_SLICES,
-        prune_filtered: bool = False, 
-        min_recist_mm: float = MIN_RECIST_MM,
-        tumor_slices_only: bool = False,
-        tumor_slice_margin: int = 0,
-        anat_window: str = 'soft-tissue',
-        pair_builder: str = 'nnunet'
+    ds: str, 
+    root: Path, 
+    out_root: Path, 
+    workers: int, 
+    with_recist: bool,
+    overwrite: bool = False, 
+    min_slices: int = MIN_LABEL_SLICES,
+    prune_filtered: bool = False, 
+    min_recist_mm: float = MIN_RECIST_MM,
+    tumor_slices_only: bool = False,
+    tumor_slice_margin: int = 0,
+    anat_window: str = 'soft-tissue',
+    pair_builder: str = 'nnunet'
 ) -> tuple[int, int, int, int, int, int, int]:
     """Convert one dataset to per-case npz, with optional RECIST and tumor-slice cropping.
 
@@ -627,7 +627,7 @@ def run_dataset(
             pairs = build_pairs_from_mit(mit_dir = root)
         case _:
             raise ValueError(f"Incompatible pair_builder input: {pair_builder}. Must be 'nnunet' or 'mit'.")
-    out_dir = out_root / ds
+    out_dir = out_root # / ds
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"\n=== {ds}  anat_window={anat_window}  window=L{level}/W{width}  cases={len(pairs)}  "
           f"recist={'on' if with_recist else 'off'}  "
