@@ -8,7 +8,9 @@ dependencies = [
     "connected-components-3d>=4.0.0,<5", 
     "opencv-python>=5.0.0.93,<6", 
     "nibabel>=5.4.2,<6", 
-    "readii"]
+    "readii",
+    "click>=8.4.2,<9",
+]
 name = "ab-testing"
 requires-python = ">= 3.11"
 version = "0.1.0"

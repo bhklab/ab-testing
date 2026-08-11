@@ -924,6 +924,7 @@ packages:
   - opencv-python>=5.0.0.93,<6
   - nibabel>=5.4.2,<6
   - readii
+  - click>=8.4.2,<9
   requires_python: '>=3.11'
 - pypi: https://files.pythonhosted.org/packages/05/d1/8952806fbf9583004ab479d8f58a9496c3d35f6b6009ddd458bdd9978eaf/dpath-2.2.0-py3-none-any.whl
   name: dpath
