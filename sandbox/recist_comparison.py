@@ -1,15 +1,20 @@
 # Script to compare the calculation of a RECIST longest diameter from a 3D tumour segmentation mask.
 # Compared method from MedSAM2 implementation and BHKLab implementation by Kaitlyn Kobayashi. 
 
-from damply import dirs
-from ab_testing.utils.conver_nifti_to_recist_npz import compute_recist_line, read_case, generate_recist
-from ab_testing.utils.annotations import get_recist_pts, get_line_from_recist
-import numpy as np
-import matplotlib.pyplot as plt
+import cv2
 import matplotlib as mpl
 import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+import numpy as np
+from damply import dirs
 from readii.image_processing import displayCTSegOverlay
-import cv2
+
+from ab_testing.utils.annotations import get_line_from_recist, get_recist_pts
+from ab_testing.utils.conver_nifti_to_recist_npz import (
+                 compute_recist_line,
+                 generate_recist,
+                 read_case,
+)
 
 cool_cmap = mpl.colormaps['cool']
 binary_magenta = mcolors.ListedColormap([(0,0,0,0.1), cool_cmap(400)])
@@ -17,7 +22,7 @@ binary_magenta = mcolors.ListedColormap([(0,0,0,0.1), cool_cmap(400)])
 sample_scan = "LUNG1-012_0011/CT_55636694"
 sample_mask = "LUNG1-012_0011/RTSTRUCT_38424583"
 
-sample_id = sample_scan.split("/")[0]
+sample_id = sample_scan.split("/", maxsplit=1)[0]
 
 scan_path = dirs.RAWDATA / "TCIA_NSCLC-Radiomics/images/mit_NSCLC-Radiomics" / f"{sample_scan}" / "CT.nii.gz"
 mask_path = dirs.RAWDATA / "TCIA_NSCLC-Radiomics/images/mit_NSCLC-Radiomics" / f"{sample_mask}" / "GTV.nii.gz"
