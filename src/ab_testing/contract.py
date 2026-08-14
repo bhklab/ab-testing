@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+
 from ab_testing.input import SUPPORTED_INPUT_TYPES
 from ab_testing.output import SUPPORTED_OUTPUT_TYPES
 

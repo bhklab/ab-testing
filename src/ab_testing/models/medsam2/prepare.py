@@ -1,12 +1,14 @@
-import click
 import logging
-
-
-from damply import dirs
 from pathlib import Path
 
-from ab_testing.utils.conver_nifti_to_recist_npz import run_dataset, MIN_LABEL_SLICES, MIN_RECIST_MM
+import click
+from damply import dirs
 
+from ab_testing.utils.conver_nifti_to_recist_npz import (
+    MIN_LABEL_SLICES,
+    MIN_RECIST_MM,
+    run_dataset,
+)
 
 logfile = dirs.LOGS / "models" / "prepare_medsam2.log"
 logfile.parent.mkdir(parents=True, exist_ok=True)
