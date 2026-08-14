@@ -1,5 +1,5 @@
+
 import numpy as np
-from pathlib import Path
 from skimage.draw import line
 from skimage.measure import regionprops
 
@@ -13,7 +13,8 @@ def get_slice_properties(mask_slice: np.ndarray) -> tuple[float, float, float, f
         semi_maj_axis_len = props.axis_major_length / 2
     except Exception as e: 
          # Usually errors will arise here if there is an issue with region props calculation and the mask being too small to calculate anything from. 
-         raise Exception(f'error {e} and sum of mask slice is {mask_slice.sum()}')
+         message = f'error {e} and sum of mask slice is {mask_slice.sum()}'
+         raise Exception(message) from e
 
     return x_cent, y_cent, orientation, semi_maj_axis_len
 
@@ -44,9 +45,11 @@ def get_recist_pts(mask_slice: np.ndarray) -> np.ndarray:
     return recist_pts
 
 
-def get_line_from_recist(recist_pts: np.array, 
-                         slice_idx: int, 
-                         scan_size: np.array):
+def get_line_from_recist(
+    recist_pts: np.ndarray, 
+    slice_idx: int, 
+    scan_size: np.ndarray
+) -> np.ndarray:
     '''
     From the RECIST measurement coordinates, generate a line connecting both coordinates on the correct slice and return an np.ndarray the same shape as the image.
     Output to be compatible with the ['recist'] array of the .npz files needed for MedSAM2-RECIST.
