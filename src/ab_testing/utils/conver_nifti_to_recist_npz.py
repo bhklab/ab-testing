@@ -70,9 +70,9 @@ from typing import Any
 
 import cc3d
 import cv2
-import pandas as pd
 import nibabel as nib
 import numpy as np
+import pandas as pd
 import SimpleITK as sitk
 from scipy.spatial.distance import pdist, squareform
 
@@ -89,6 +89,7 @@ RECIST_LINE_THICKNESS = 2       # cv2.line thickness
 MAX_CONTOUR_PTS = 500           # subsample cap before the O(n^2) pairwise distance
 IMG_SUFFIX = "_0000.nii.gz"
 ROOT_DEFAULT = "train_per_cancer_type"
+MIN_POINT_COUNT = 2
 
 # The 4 anatomical window buckets (level / width in HU).
 WINDOW_BUCKET: dict[str, dict[str, int]] = {
@@ -145,7 +146,8 @@ def _meta_from_affine(affine: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.nd
     matrix = np.asarray(affine[:3, :3], dtype=np.float64)
     spacing = np.linalg.norm(matrix, axis=0)
     if np.any(spacing == 0):
-        raise RuntimeError("NIfTI affine has a zero-length spatial axis")
+        message = "NIfTI affine has a zero-length spatial axis"
+        raise RuntimeError(message)
     direction = _orthogonalize(matrix / spacing)
     origin = np.asarray(affine[:3, 3], dtype=np.float64)
     return spacing, direction.reshape(-1), origin
@@ -215,7 +217,8 @@ def compute_recist_line(mask_2d: np.ndarray) -> tuple[np.ndarray, np.ndarray] | 
     if not contours:
         return None
     pts = np.vstack(contours).squeeze()
-    if pts.ndim != 2 or len(pts) < 2:
+    # Fail if points are not 2 dimensional (x,y) or the number of points is less than MIN_POINT_COUNT (default 2)
+    if pts.ndim != 2 or len(pts) < MIN_POINT_COUNT: # noqa
         return None
     if len(pts) > MAX_CONTOUR_PTS:
         pts = pts[np.linspace(0, len(pts) - 1, MAX_CONTOUR_PTS, dtype=int)]
@@ -399,7 +402,7 @@ def savez_atomic(
     os.close(fd)
     try:
         np.savez_compressed(tmp, **arrays)
-        os.replace(tmp, out_path)
+        Path(tmp).replace(out_path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
@@ -518,6 +521,7 @@ def _convert_one(job: dict[str, Any]) -> tuple[str, str, str | None, dict[str, i
             detail = f"dropped {dropped} lesion(s) with RECIST < {job['min_recist_mm']:g} mm"
             if remaining == 0:
                 detail += " -- NO lesions left in gts"
+        # Consider moving this statement to an else block
         return ("ok", out, detail, stats)
     except Exception as exc:  # noqa: BLE001 -- per-case error, collected not fatal
         return ("error", out, repr(exc), {})
@@ -530,23 +534,35 @@ def build_pairs(
     root: Path
 ) -> list[tuple[Path, Path, str]]:
     """(image, label, case_id) triples. Fail loud on structural problems."""
+    # Dataset must exist in the DATASET_WINDOW constant at the top of this script
     if ds not in DATASET_WINDOW:
-        raise SystemExit(f"[setup] unknown dataset {ds!r} (known: {sorted(DATASET_WINDOW)})")
+        message = f"[setup] unknown dataset {ds!r} (known: {sorted(DATASET_WINDOW)})"
+        raise SystemExit(message)
+    
     images_tr = root / ds / "imagesTr"
     labels_tr = root / ds / "labelsTr"
+    # Check that images and labels paths point to directories
     if not images_tr.is_dir():
-        raise SystemExit(f"[setup] missing imagesTr: {images_tr}")
+        message = f"[setup] missing imagesTr: {images_tr}"
+        raise SystemExit(message)
     if not labels_tr.is_dir():
-        raise SystemExit(f"[setup] missing labelsTr: {labels_tr}")
+        message = f"[setup] missing labelsTr: {labels_tr}"
+        raise SystemExit(message)
+    
     images = sorted(images_tr.glob(f"*{IMG_SUFFIX}"))
+    # Check that nifti files were found in the images directory
     if not images:
-        raise SystemExit(f"[setup] no '*{IMG_SUFFIX}' images under {images_tr}")
+        message = f"[setup] no '*{IMG_SUFFIX}' images under {images_tr}"
+        raise SystemExit(message)
+    # Generate tuples with matching image and label file paths and a case ID to label the output with
     pairs: list[tuple[Path, Path, str]] = []
     for img in images:
         case = img.name[: -len(IMG_SUFFIX)]
         lbl = labels_tr / f"{case}.nii.gz"
+        # Fail if an image does not have a corresponding label
         if not lbl.exists():
-            raise SystemExit(f"[fail-loud] image without label: {img.name} -> expected {lbl}")
+            message = f"[fail-loud] image without label: {img.name} -> expected {lbl}"
+            raise SystemExit(message)
         pairs.append((img, lbl, case))
     return pairs
 
@@ -557,7 +573,8 @@ def build_pairs_from_mit(
     """Set up (image, label, case_id) triples to iterate over from a med-imagetools autopipeline index. case_id will be the label for the npz file.
     """
     if not mit_dir.exists():
-        raise SystemExit(f"[setup] med-imagetools directory not found at {mit_dir}")
+        message = f"[setup] med-imagetools directory not found at {mit_dir}"
+        raise SystemExit(message)
 
     # Get just the name of the MIT directory to use for index file loading
     mit_ds = mit_dir.stem
@@ -574,7 +591,7 @@ def build_pairs_from_mit(
         images = mit_dir / group.loc[group['class'] == 'Scan', 'filepath'].astype(str)
         labels = mit_dir / group.loc[group['class'] == 'Mask', 'filepath'].astype(str)
         # Extract the case_id from the beginning of the filepath
-        case_id = group['filepath'].values[0].split('/')[0]
+        case_id = group['filepath'].to_numpy[0].split('/')[0]
 
         # Get each pair of the scan and it's labels, and add the sample number as the case for the pair triplet
         for pair in itertools.product(images, labels, [case_id]):
@@ -589,6 +606,7 @@ def run_dataset(
     out_root: Path, 
     workers: int, 
     with_recist: bool,
+    *, # handles too many variables qa check in ruff
     overwrite: bool = False, 
     min_slices: int = MIN_LABEL_SLICES,
     prune_filtered: bool = False, 
@@ -621,16 +639,21 @@ def run_dataset(
     win = WINDOW_BUCKET[anat_window]
     level, width = win["level"], win["width"]
 
+    # Get list of (image_path, label_path, case_id) to iterate over
     match pair_builder:
         case 'nnunet':
-            pairs = build_pairs(ds, root) # list of (image_path, label_path, case_id)
+            pairs = build_pairs(ds, root)
         case 'mit':
             pairs = build_pairs_from_mit(mit_dir = root)
         case _:
-            raise ValueError(f"Incompatible pair_builder input: {pair_builder}. Must be 'nnunet' or 'mit'.")
+            message = f"Incompatible pair_builder input: {pair_builder}. Must be 'nnunet' or 'mit'."
+            raise ValueError(message)
+    
+    # Create output directory    
     out_dir = out_root # / ds
     out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"\n=== {ds}  anat_window={anat_window}  window=L{level}/W{width}  cases={len(pairs)}  "
+
+    print(f"\n=== {ds}  anat_window={anat_window}  window=L{level}/W{width}  cases={len(pairs)}  " # noqa
           f"recist={'on' if with_recist else 'off'}  "
           f"mode={'overwrite' if overwrite else 'resume'}  "
           f"min_label_slices={min_slices or 'off'}  "
@@ -645,11 +668,8 @@ def run_dataset(
              "tumor_slices_only": tumor_slices_only,
              "tumor_slice_margin": tumor_slice_margin}
             for img, lbl, case in pairs]
-    written = 0
-    skipped = 0
-    dropped_lesions = 0
-    z_kept = 0
-    z_total = 0
+    
+    written = skipped = dropped_lesions = z_kept = z_total = 0
     small: list[tuple[str, str | None]] = []
     filtered: list[tuple[str, str | None]] = []
     errors: list[tuple[str, str | None]] = []
@@ -658,35 +678,41 @@ def run_dataset(
         for i, fut in enumerate(as_completed(futures), 1):
             status, out, detail, stats = fut.result()
             dropped_lesions += stats.get("dropped", 0)
-            if stats:
-                z_kept += stats["z1"] - stats["z0"]
-                z_total += stats["nz_full"]
-            if status == "ok":
-                written += 1
-                if detail:
-                    small.append((out, detail))
-            elif status == "skip":
-                skipped += 1
-            elif status == "filtered":
-                filtered.append((out, detail))
-            else:
-                errors.append((out, detail))
+  
+            z_kept += stats["z1"] - stats["z0"] if stats else 0
+            z_total += stats["nz_full"] if stats else 0
+
+            match status:
+                case "ok":
+                    written += 1
+                    if detail:
+                        small.append((out, detail))
+                case "skip":
+                    skipped += 1
+                case "filtered":
+                    filtered.append((out, detail))
+                case _:
+                    errors.append((out, detail))
+
+            # log at every 50 samples
             if i % 50 == 0 or i == len(futures):
-                print(f"  {i}/{len(futures)} done; written={written} skipped={skipped} "
+                print(f"  {i}/{len(futures)} done; written={written} skipped={skipped} "# noqa
                       f"filtered={len(filtered)} errors={len(errors)} "
                       f"small_lesions_dropped={dropped_lesions}", flush=True)
+                
     for out, detail in small:
-        print(f"  SMALL {Path(out).stem}: {detail}", flush=True)
+        print(f"  SMALL {Path(out).stem}: {detail}", flush=True) # noqa
     for out, detail in filtered:
-        print(f"  FILTERED {Path(out).stem}: {detail}", flush=True)
+        print(f"  FILTERED {Path(out).stem}: {detail}", flush=True) # noqa
     for out, detail in errors[:10]:
-        print(f"  ERROR {out}: {detail}", flush=True)
-    crop_note = ""
-    if tumor_slices_only and z_total:
-        crop_note = f" slices_kept={z_kept}/{z_total} ({100.0 * z_kept / z_total:.1f}%)"
-    print(f"  summary: {ds} written={written} skipped={skipped} "
+        print(f"  ERROR {out}: {detail}", flush=True) # noqa
+
+    crop_note = f" slices_kept={z_kept}/{z_total} ({100.0 * z_kept / z_total:.1f}%)" if tumor_slices_only and z_total else ""
+
+    print(f"  summary: {ds} written={written} skipped={skipped} " # noqa
           f"filtered={len(filtered)} errors={len(errors)} "
           f"small_lesions_dropped={dropped_lesions}{crop_note}", flush=True)
+    
     return written, skipped, len(filtered), len(errors), dropped_lesions, z_kept, z_total
 
 
@@ -729,6 +755,7 @@ def main(argv: list[str] | None = None) -> int:
                    help="method to use for pair building, based on directory structure of niftis. Can be nnunet or mit (for med-imagetools). "
                         "(default: 'nnunet')")
     args = p.parse_args(argv)
+
     if args.min_label_slices < 0:
         p.error("--min-label-slices must be >= 0")
     if args.min_recist_mm < 0:
@@ -737,20 +764,21 @@ def main(argv: list[str] | None = None) -> int:
         p.error("--tumor-slice-margin must be >= 0")
     if args.tumor_slice_margin and not args.tumor_slices_only:
         p.error("--tumor-slice-margin has no effect without --tumor-slices-only")
-    if args.anat_window not in WINDOW_BUCKET.keys():
+    if args.anat_window not in WINDOW_BUCKET:
         p.error(f"--anat-window must be one of {WINDOW_BUCKET.keys()}")
     
     out_root = args.out_root or (args.root / "npz_version_data")
     datasets = sorted(DATASET_WINDOW) if args.all else [args.dataset]
     with_recist = not args.no_recist
     min_recist_mm = args.min_recist_mm if args.exclude_small_lesions else 0.0
+
     # The cutoff is measured on the RECIST line, so it cannot be applied at all
     # without computing one.
     if min_recist_mm > 0 and not with_recist:
         p.error("--exclude-small-lesions needs the RECIST lines; drop --no-recist "
                 "or pass --no-exclude-small-lesions")
 
-    print(f"root={args.root}  out_root={out_root}  datasets={len(datasets)}  "
+    print(f"root={args.root}  out_root={out_root}  datasets={len(datasets)}  " # noqa
           f"workers={args.workers}  recist={'on' if with_recist else 'off'}  "
           f"mode={'overwrite' if args.overwrite else 'resume'}  "
           f"min_label_slices={args.min_label_slices or 'off'}  "
@@ -758,13 +786,8 @@ def main(argv: list[str] | None = None) -> int:
           f"tumor_slices_only={f'on(+{args.tumor_slice_margin})' if args.tumor_slices_only else 'off'}"
           f"{'  prune_filtered=on' if args.prune_filtered else ''}", 
           f"anat_window={args.anat_window} ", flush=True)
-    total_written = 0
-    total_skipped = 0
-    total_filtered = 0
-    total_err = 0
-    total_dropped = 0
-    total_z_kept = 0
-    total_z_full = 0
+    
+    total_written = total_skipped = total_filtered = total_err = total_dropped = total_z_kept = total_z_full = 0
     for ds in datasets:
         w, s, f, e, d, zk, zt = run_dataset(
             ds, args.root, out_root, args.workers, with_recist, args.overwrite,
@@ -777,13 +800,13 @@ def main(argv: list[str] | None = None) -> int:
         total_dropped += d
         total_z_kept += zk
         total_z_full += zt
-    crop_note = ""
-    if args.tumor_slices_only and total_z_full:
-        crop_note = (f" slices_kept={total_z_kept}/{total_z_full} "
-                     f"({100.0 * total_z_kept / total_z_full:.1f}%)")
-    print(f"\nTOTAL written={total_written} skipped={total_skipped} "
+
+    crop_note = (f" slices_kept={total_z_kept}/{total_z_full} ({100.0 * total_z_kept / total_z_full:.1f}%)") if args.tumor_slices_only and total_z_full else ""
+
+    print(f"\nTOTAL written={total_written} skipped={total_skipped} " # noqa
           f"filtered={total_filtered} errors={total_err} "
-          f"small_lesions_dropped={total_dropped}{crop_note}", flush=True)
+          f"small_lesions_dropped={total_dropped}{crop_note}", flush=True) 
+    
     return 1 if total_err else 0
 
 
