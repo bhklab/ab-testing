@@ -81,6 +81,7 @@ def prepare_data(
     mit_directory: str | Path, 
     output_directory: str | Path,
     anat_window: str,
+    *,
     min_slices: int = MIN_LABEL_SLICES,
     min_recist_mm: float = MIN_RECIST_MM,
     workers: int = 24,
