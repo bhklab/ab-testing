@@ -37,3 +37,6 @@ env.RESULTS = "${PIXI_PROJECT_ROOT}/data/results"
 env.SCRIPTS = "${PIXI_PROJECT_ROOT}/workflow/scripts"
 
 [tool.pixi.tasks]
+
+[tool.pixi.environments.qc.dependencies]
+ruff = ">=0.16.2,<0.17"
