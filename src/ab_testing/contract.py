@@ -1,6 +1,7 @@
 from pydantic import BaseModel
-from input import SUPPORTED_INPUT_TYPES
-from output import SUPPORTED_OUTPUT_TYPES
+
+from ab_testing.input import SUPPORTED_INPUT_TYPES
+from ab_testing.output import SUPPORTED_OUTPUT_TYPES
 
 
 class ModelContract(BaseModel):

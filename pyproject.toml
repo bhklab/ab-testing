@@ -1,0 +1,42 @@
+[project]
+authors = [{name = "Joshua Siraj", email = "joshua.siraj@ryerson.ca"}, {name = "Katy Scott", email = "bhklab.katyscott@gmail.com"}]
+dependencies = [
+    "simpleitk>=2.5.6,<3",
+    "pydantic>=2.13.4,<3",
+    "damply>=0.26.1,<0.27",
+    "med-imagetools>=2.16.0,<3", 
+    "connected-components-3d>=4.0.0,<5", 
+    "opencv-python>=5.0.0.93,<6", 
+    "nibabel>=5.4.2,<6", 
+    "readii",
+    "click>=8.4.2,<9",
+]
+name = "ab-testing"
+requires-python = ">= 3.11"
+version = "0.1.0"
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-64", "osx-arm64"]
+
+[tool.pixi.pypi-dependencies]
+ab_testing = { path = ".", editable = true }
+
+[tool.pixi.activation]
+# convenient variables which can be used in scripts
+env.CONFIG = "${PIXI_PROJECT_ROOT}/config"
+env.METADATA = "${PIXI_PROJECT_ROOT}/metadata"
+env.LOGS = "${PIXI_PROJECT_ROOT}/logs"
+env.RAWDATA = "${PIXI_PROJECT_ROOT}/data/rawdata"
+env.PROCDATA = "${PIXI_PROJECT_ROOT}/data/procdata"
+env.RESULTS = "${PIXI_PROJECT_ROOT}/data/results"
+env.SCRIPTS = "${PIXI_PROJECT_ROOT}/workflow/scripts"
+
+[tool.pixi.tasks]
+
+[tool.pixi.environments.qc.dependencies]
+ruff = ">=0.16.2,<0.17"
